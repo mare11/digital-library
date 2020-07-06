@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <script src="webjars/jquery/3.5.1/jquery.min.js" type="text/javascript"></script>
+    <script src="js/main.js" type="text/javascript"></script>
+    <link href="css/style.css" rel="stylesheet">
+</head>
+<body>
+
+<h1>Search digital library</h1>
+<form id="searchForm" method="POST">
+    <!--    <select>-->
+    <!--        <option>Casopis</option>-->
+    <!--        <option>Naslov</option>-->
+    <!--        <option>Autor</option>-->
+    <!--        <option>Kljucne rijeci</option>-->
+    <!--        <option>Tekst</option>-->
+    <!--        <option>Oblast</option>-->
+    <!--    </select>-->
+    <div>
+        <select>
+            <option>i</option>
+            <option>ili</option>
+            <option>i ne</option>
+        </select>
+        <input name="magazine" placeholder="magazin" type="text"/><br/><br/>
+    </div>
+    <div>
+        <select>
+            <option>i</option>
+            <option>ili</option>
+            <option>i ne</option>
+        </select>
+        <input name="title" placeholder="naslov" type="text"/><br/><br/>
+    </div>
+    <div>
+        <select>
+            <option>i</option>
+            <option>ili</option>
+            <option>i ne</option>
+        </select>
+        <input name="author" placeholder="autor" type="text"/><br/><br/>
+    </div>
+    <div>
+        <select>
+            <option>i</option>
+            <option>ili</option>
+            <option>i ne</option>
+        </select>
+        <input name="keywords" placeholder="kljucne rijeci" type="text"/><br/><br/>
+    </div>
+    <div>
+        <select>
+            <option>i</option>
+            <option>ili</option>
+            <option>i ne</option>
+        </select>
+        <input name="areas" placeholder="oblasti" type="text"/><br/><br/>
+    </div>
+    <div>
+        <select>
+            <option>i</option>
+            <option>ili</option>
+            <option>i ne</option>
+        </select>
+        <input name="text" placeholder="text" type="text"/><br/><br/>
+    </div>
+    <input id="btnSearch" type="submit" value="Submit"/>
+</form>
+
+<h1>Result</h1>
+<pre>
+    <span id="result"></span>
+</pre>
+</body>
+</html>
