@@ -14,7 +14,7 @@ $(document).ready(function () {
         //stop submit the form, we will post it manually.
         event.preventDefault();
 
-        search();
+        searchQuery();
 
     });
 
@@ -23,9 +23,9 @@ $(document).ready(function () {
 function index() {
 
     // Get form
-    var form = $('#indexForm')[0];
+    const form = $('#indexForm')[0];
 
-    var data = new FormData(form);
+    const data = new FormData(form);
 
     $("#btnSubmit").prop("disabled", true);
 
@@ -41,14 +41,12 @@ function index() {
         success: function (data) {
             $('#result').empty();
             $("#result").text(data);
-            console.log("SUCCESS : ", data);
             $("#btnSubmit").prop("disabled", false);
 
         },
         error: function (e) {
             $('#result').empty();
             $("#result").text(e.responseText);
-            console.log("ERROR : ", e);
             $("#btnSubmit").prop("disabled", false);
 
         }
@@ -56,7 +54,7 @@ function index() {
 
 }
 
-function search() {
+function searchQuery() {
     const data = []
     const elements = $('#searchForm div')
 
@@ -78,11 +76,81 @@ function search() {
 
     $.ajax({
         type: "POST",
-        url: "/search",
+        url: "/search/query",
         data: JSON.stringify(data),
         contentType: 'application/json',
         success: function (data) {
+            appendResults(data);
+            $("#btnSearch").prop("disabled", false);
 
+        },
+        error: function (e) {
+            $('#result').empty();
+            $("#result").text(e.responseText);
+            $("#btnSearch").prop("disabled", false);
+        }
+    });
+}
+
+function appendResults(data) {
+    $('#result').empty();
+    for (let i = 0; i < data.length; i++) {
+        const result = data[i]
+        $.each(result, function (key, value) {
+            $('#result').append('<li>' + key + ': ' + value + '</li>');
+        });
+        const moreLikeThisButton = $('<button/>', {
+            text: 'More Like This',
+            click: function () {
+                searchMoreLikeThis(this, result.filename)
+            }
+        });
+        const geoDistanceButton = $('<button/>', {
+            text: 'Geo Distance',
+            click: function () {
+                searchGeoDistance(this, result.filename)
+            }
+        });
+        const downloadButton = $('<button/>', {
+            text: 'Download',
+            click: function () {
+                downloadFile(this, result.filename)
+            }
+        });
+        $('#result').append('<br/>');
+        $('#result').append(moreLikeThisButton);
+        $('#result').append(geoDistanceButton);
+        $('#result').append(downloadButton);
+        $('#result').append('<hr/>');
+    }
+}
+
+function searchMoreLikeThis(element, filename) {
+    $(element).prop("disabled", true);
+
+    $.ajax({
+        type: "GET",
+        url: "/search/more-like-this/" + filename,
+        success: function (data) {
+            appendResults(data);
+            $(element).prop("disabled", false);
+
+        },
+        error: function (e) {
+            $('#result').empty();
+            $("#result").text(e.responseText);
+            $(element).prop("disabled", false);
+        }
+    });
+}
+
+function searchGeoDistance(element, filename) {
+    $(element).prop("disabled", true);
+
+    $.ajax({
+        type: "GET",
+        url: "/search/geo-distance/" + filename,
+        success: function (data) {
             $('#result').empty();
             for (let i = 0; i < data.length; i++) {
                 const result = data[i]
@@ -91,16 +159,39 @@ function search() {
                 });
                 $('#result').append('<hr/>');
             }
-            console.log("SUCCESS : ", data);
-            $("#btnSearch").prop("disabled", false);
+            $(element).prop("disabled", false);
 
         },
         error: function (e) {
             $('#result').empty();
             $("#result").text(e.responseText);
-            console.log("ERROR : ", e);
-            $("#btnSearch").prop("disabled", false);
+            $(element).prop("disabled", false);
+        }
+    });
+}
 
+function downloadFile(element, filename) {
+    $(element).prop("disabled", true);
+
+    $.ajax({
+        type: "GET",
+        url: "/download/" + filename,
+        success: function (data) {
+            const binaryData = [];
+            binaryData.push(data);
+            const url = window.URL.createObjectURL(new Blob(binaryData, {type: "application/pdf"}));
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = filename;
+            link.click();
+            window.URL.revokeObjectURL(url);
+            $(element).prop("disabled", false);
+
+        },
+        error: function (e) {
+            $('#result').empty();
+            $("#result").text(e.responseText);
+            $(element).prop("disabled", false);
         }
     });
 }

@@ -14,7 +14,7 @@ import java.io.IOException;
 import java.util.Date;
 
 @Slf4j
-public class PDFHandler extends DocumentHandler {
+public class PDFHandler implements DocumentHandler {
 
     @Override
     public IndexUnit getIndexUnit(File file) {
@@ -48,8 +48,7 @@ public class PDFHandler extends DocumentHandler {
     public String getText(PDFParser parser) {
         try {
             PDFTextStripper textStripper = new PDFTextStripper();
-            String text = textStripper.getText(parser.getPDDocument());
-            return text;
+            return textStripper.getText(parser.getPDDocument());
         } catch (IOException e) {
             log.error("Greksa pri konvertovanju dokumenta u pdf");
         }

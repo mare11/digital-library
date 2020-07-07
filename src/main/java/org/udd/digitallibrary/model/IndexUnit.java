@@ -28,7 +28,7 @@ public class IndexUnit {
     private String title;
 
     @Field(type = FieldType.Nested, store = true, analyzer = SERBIAN_ANALYZER)
-    private List<Author> authors;
+    private List<IndexUser> authors;
 
     @Field(type = FieldType.Text, store = true, analyzer = SERBIAN_ANALYZER)
     private String keywords;

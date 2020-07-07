@@ -1,11 +1,18 @@
 package org.udd.digitallibrary.service;
 
 import lombok.extern.slf4j.Slf4j;
+import org.apache.lucene.search.join.ScoreMode;
+import org.elasticsearch.common.geo.GeoDistance;
+import org.elasticsearch.common.geo.GeoPoint;
+import org.elasticsearch.common.unit.DistanceUnit;
 import org.elasticsearch.index.query.BoolQueryBuilder;
+import org.elasticsearch.index.query.MoreLikeThisQueryBuilder;
 import org.elasticsearch.index.query.QueryBuilder;
 import org.elasticsearch.index.query.QueryBuilders;
 import org.elasticsearch.search.fetch.subphase.highlight.HighlightBuilder;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.core.io.ByteArrayResource;
+import org.springframework.core.io.Resource;
 import org.springframework.data.elasticsearch.core.ElasticsearchOperations;
 import org.springframework.data.elasticsearch.core.SearchHit;
 import org.springframework.data.elasticsearch.core.SearchHits;
@@ -25,10 +32,15 @@ import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
+import java.util.Objects;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
+import static org.udd.digitallibrary.model.IndexUnit.INDEX_NAME;
 import static org.udd.digitallibrary.model.IndexUnit.SERBIAN_ANALYZER;
 
 @Slf4j
@@ -52,21 +64,23 @@ public class IndexServiceImpl implements IndexService {
             log.warn("Missing file!");
             return;
         }
-        String fileName = saveUploadedFile(file);
-        if (fileName != null) {
-            DocumentHandler handler = getHandler(fileName);
+        String filename = saveUploadedFile(file);
+        if (filename != null) {
+            DocumentHandler handler = getHandler(filename);
             if (handler == null) {
-                log.error("No available handler for file: {}", fileName);
+                log.error("No available handler for file: {}", filename);
                 return;
             }
-            IndexUnit indexUnit = handler.getIndexUnit(new File(fileName));
+            IndexUnit indexUnit = handler.getIndexUnit(new File(filename));
+            String[] nameParts = filename.split(Pattern.quote("\\"));
+            indexUnit.setFilename(nameParts[nameParts.length - 1]);
             indexUnit.setMagazine(model.getMagazine());
             indexUnit.setTitle(model.getTitle());
             indexUnit.setAuthors(getAuthors(model.getAuthors()));
             indexUnit.setKeywords(model.getKeywords());
             indexUnit.setAreas(model.getAreas());
             operations.save(indexUnit);
-            log.info("File '{}' saved!", fileName);
+            log.info("File '{}' saved!", indexUnit.getFilename());
         }
     }
 
@@ -93,17 +107,12 @@ public class IndexServiceImpl implements IndexService {
         }
     }
 
-    private List<Author> getAuthors(String authors) {
-        List<Author> authorList = new ArrayList<>();
-        String[] splitAuthors = authors.split(",");
-        for (String splitAuthor : splitAuthors) {
-            String[] authorNames = splitAuthor.split(" ");
-            authorList.add(Author.builder()
-                    .firstName(authorNames[0])
-                    .lastName(authorNames[1])
-                    .build());
-        }
-        return authorList;
+    private List<IndexUser> getAuthors(String authors) {
+        String[] splitAuthors = authors.split(" ");
+        return Arrays.stream(splitAuthors)
+                .map(s -> operations.get(s, IndexUser.class))
+                .filter(Objects::nonNull)
+                .collect(Collectors.toList());
     }
 
     private File getResourceFilePath() {
@@ -118,14 +127,15 @@ public class IndexServiceImpl implements IndexService {
     }
 
     @Override
-    public List<ResultData> search(List<QueryData> queryData) {
+    public List<ResultUnit> querySearch(List<QueryData> queryData) {
         BoolQueryBuilder queryBuilder = QueryBuilders.boolQuery();
         queryData.forEach(data -> {
             QueryBuilder fieldQueryBuilder;
-            if (isPhraseSearch(data.getValue())) {
-                fieldQueryBuilder = QueryBuilders.matchPhraseQuery(data.getField(), data.getValue().replaceAll("\"", "")).analyzer(SERBIAN_ANALYZER);
+            boolean authorSearch = data.getField().equals("authors");
+            if (authorSearch) {
+                fieldQueryBuilder = getAuthorsNestedQueryBuilder(data);
             } else {
-                fieldQueryBuilder = QueryBuilders.matchQuery(data.getField(), data.getValue()).analyzer(SERBIAN_ANALYZER);
+                fieldQueryBuilder = getRegularQueryBuilder(data);
             }
             if (data.getOperation().equalsIgnoreCase("I")) {
                 queryBuilder.must(fieldQueryBuilder);
@@ -135,19 +145,67 @@ public class IndexServiceImpl implements IndexService {
                 queryBuilder.mustNot(fieldQueryBuilder);
             }
         });
-        NativeSearchQuery build = new NativeSearchQueryBuilder()
+        NativeSearchQuery query = new NativeSearchQueryBuilder()
                 .withQuery(queryBuilder)
                 .withHighlightFields(getFieldsForHighlighting(queryData))
                 .build();
-        SearchHits<IndexUnit> searchHits = operations.search(build, IndexUnit.class);
+
+        SearchHits<IndexUnit> searchHits = operations.search(query, IndexUnit.class);
+
+        return convertToResults(searchHits);
+    }
+
+    private QueryBuilder getAuthorsNestedQueryBuilder(QueryData data) {
+        QueryBuilder firstNameQueryBuilder;
+        QueryBuilder lastNameQueryBuilder;
+
+        if (isPhraseSearch(data.getValue())) {
+            String value = data.getValue().replaceAll("\"", "");
+            firstNameQueryBuilder = QueryBuilders.matchPhraseQuery("firstName", value).analyzer(SERBIAN_ANALYZER);
+            lastNameQueryBuilder = QueryBuilders.matchPhraseQuery("lastName", value).analyzer(SERBIAN_ANALYZER);
+        } else {
+            firstNameQueryBuilder = QueryBuilders.matchQuery("firstName", data.getValue()).analyzer(SERBIAN_ANALYZER);
+            lastNameQueryBuilder = QueryBuilders.matchQuery("lastName", data.getValue()).analyzer(SERBIAN_ANALYZER);
+        }
+        BoolQueryBuilder authorsQueryBuilder = QueryBuilders.boolQuery()
+                .should(firstNameQueryBuilder)
+                .should(lastNameQueryBuilder);
+
+        return QueryBuilders.nestedQuery("authors", authorsQueryBuilder, ScoreMode.Avg);
+    }
+
+    private QueryBuilder getRegularQueryBuilder(QueryData data) {
+        QueryBuilder fieldQueryBuilder;
+        if (isPhraseSearch(data.getValue())) {
+            String value = data.getValue().replaceAll("\"", "");
+            fieldQueryBuilder = QueryBuilders.matchPhraseQuery(data.getField(), value).analyzer(SERBIAN_ANALYZER);
+        } else {
+            fieldQueryBuilder = QueryBuilders.matchQuery(data.getField(), data.getValue()).analyzer(SERBIAN_ANALYZER);
+        }
+        return fieldQueryBuilder;
+    }
+
+    private HighlightBuilder.Field[] getFieldsForHighlighting(List<QueryData> data) {
+        return data.stream()
+                .map(queryData -> new HighlightBuilder.Field(queryData.getField())
+                        .preTags("<b>")
+                        .postTags("</b>"))
+                .toArray(HighlightBuilder.Field[]::new);
+    }
+
+    private List<ResultUnit> convertToResults(SearchHits<IndexUnit> searchHits) {
         return searchHits.stream()
                 .map(hit -> {
                     IndexUnit indexUnit = hit.getContent();
                     String highlight = getHighlight(hit);
-                    return ResultData.builder()
+                    StringBuilder authors = new StringBuilder("");
+                    indexUnit.getAuthors().forEach(user -> authors.append(String.join(" ", user.getFirstName(), user.getLastName(), user.getLocationName())).append(","));
+
+                    return ResultUnit.builder()
+                            .filename(indexUnit.getFilename())
                             .magazine(indexUnit.getMagazine())
                             .title(indexUnit.getTitle())
-//                            .authors(indexUnit.getAuthors().toString()) // TODO
+                            .authors(authors.toString().substring(0, authors.length() - 1))
                             .keywords(indexUnit.getKeywords())
                             .areas(indexUnit.getAreas())
                             .highlight(highlight)
@@ -160,20 +218,79 @@ public class IndexServiceImpl implements IndexService {
         return value.startsWith("\"") && value.endsWith("\"");
     }
 
-    private HighlightBuilder.Field[] getFieldsForHighlighting(List<QueryData> data) {
-        return data.stream()
-                .map(queryData -> new HighlightBuilder.Field(queryData.getField()))
-                .toArray(HighlightBuilder.Field[]::new);
-    }
-
     private String getHighlight(SearchHit<IndexUnit> hit) {
         return hit.getHighlightFields().values()
                 .stream()
-                .reduce((strings1, strings2) -> {
-                    strings1.addAll(strings2);
-                    return strings1;
-                })
+                .reduce((strings1, strings2) -> Stream.concat(strings1.stream(), strings2.stream()).collect(Collectors.toList()))
                 .map(strings -> String.join(" ... ", strings))
                 .orElseGet(() -> hit.getContent().getText().substring(0, 150).concat(" ... "));
+    }
+
+    @Override
+    public List<ResultUnit> moreLikeThisSearch(String filename) {
+        String fieldName = "text";
+        MoreLikeThisQueryBuilder queryBuilder = QueryBuilders
+                .moreLikeThisQuery(
+                        new String[]{fieldName}, //fields
+                        null,
+                        new MoreLikeThisQueryBuilder.Item[]{new MoreLikeThisQueryBuilder.Item(INDEX_NAME, filename)} // like docs
+                ).minTermFreq(2)
+                .minDocFreq(2)
+                .analyzer(SERBIAN_ANALYZER);
+
+        NativeSearchQuery query = new NativeSearchQueryBuilder()
+                .withQuery(queryBuilder)
+                .withHighlightFields(new HighlightBuilder.Field(fieldName)
+                        .preTags("<b>")
+                        .postTags("</b>"))
+                .build();
+
+        SearchHits<IndexUnit> searchHits = operations.search(query, IndexUnit.class);
+
+        return convertToResults(searchHits);
+    }
+
+    @Override
+    public List<ResultUser> geoDistanceSearch(String filename) {
+        BoolQueryBuilder boolQueryBuilder = QueryBuilders.boolQuery();
+
+        IndexUnit indexUnit = operations.get(filename, IndexUnit.class);
+        if (indexUnit == null || indexUnit.getAuthors() == null) {
+            return Collections.emptyList();
+        }
+        indexUnit.getAuthors().forEach(author ->
+                boolQueryBuilder.mustNot(QueryBuilders
+                        .geoDistanceQuery("location")
+                        .point(new GeoPoint(author.getLocation().getLat(), author.getLocation().getLon()))
+                        .distance(100, DistanceUnit.KILOMETERS)
+                        .geoDistance(GeoDistance.ARC)));
+
+        NativeSearchQuery query = new NativeSearchQueryBuilder()
+                .withQuery(boolQueryBuilder)
+                .build();
+
+        SearchHits<IndexUser> searchHits = operations.search(query, IndexUser.class);
+
+        return searchHits.stream()
+                .map(hit -> {
+                    IndexUser indexUser = hit.getContent();
+                    return ResultUser.builder()
+                            .firstName(indexUser.getFirstName())
+                            .lastName(indexUser.getLastName())
+                            .locationName(indexUser.getLocationName())
+                            .build();
+                })
+                .collect(Collectors.toList());
+    }
+
+    @Override
+    public Resource getFile(String filename) {
+        try {
+            Path path = Paths.get(getResourceFilePath().getAbsolutePath() + File.separator + filename);
+            return new ByteArrayResource(Files.readAllBytes(path));
+        } catch (IOException e) {
+            log.error("Error while reading file!");
+            throw new BadRequestException();
+        }
     }
 }

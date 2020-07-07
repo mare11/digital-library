@@ -4,10 +4,10 @@ import org.udd.digitallibrary.model.IndexUnit;
 
 import java.io.File;
 
-public abstract class DocumentHandler {
+public interface DocumentHandler {
 
-    public abstract IndexUnit getIndexUnit(File file);
+    IndexUnit getIndexUnit(File file);
 
-    public abstract String getText(File file);
+    String getText(File file);
 
 }

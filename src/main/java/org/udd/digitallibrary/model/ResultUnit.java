@@ -5,7 +5,8 @@ import lombok.Value;
 
 @Value
 @Builder
-public class ResultData {
+public class ResultUnit {
+    String filename;
     String magazine;
     String title;
     String authors;
